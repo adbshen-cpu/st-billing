@@ -659,7 +659,7 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
         </div>
         <div class="field"><label>Billing Frequency</label>
           <select id="svc-freq">
-            <option>Monthly</option><option>Quarterly</option><option>Annual</option>
+            <option>Weekly</option><option>Monthly</option><option>Quarterly</option><option>Annual</option>
             <option>One-time</option><option>Per Engagement</option>
           </select>
         </div>
@@ -694,7 +694,7 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
         <div class="field"><label>Frequency Override</label>
           <select id="as-freq">
             <option value="">Use service default</option>
-            <option>Monthly</option><option>Quarterly</option><option>Annual</option>
+            <option>Weekly</option><option>Monthly</option><option>Quarterly</option><option>Annual</option>
           </select>
         </div>
         <div class="field"><label>Start Date *</label><input type="date" id="as-start" required/></div>
@@ -727,6 +727,21 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
     <div class="modal-ft">
       <button class="btn btn-ghost" onclick="closeModal('modal-note')">Cancel</button>
       <button class="btn btn-primary" onclick="saveNote()">Save Note</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: View Invoice -->
+<div class="modal-overlay" id="modal-view-invoice">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-hd">
+      <h3 id="view-inv-title">Invoice</h3>
+      <button class="modal-close" onclick="closeModal('modal-view-invoice')">✕</button>
+    </div>
+    <div class="modal-body" id="view-inv-body"></div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" onclick="closeModal('modal-view-invoice')">Close</button>
+      <button class="btn btn-primary" id="view-inv-pdf-btn">⬇️ Download PDF</button>
     </div>
   </div>
 </div>
@@ -1003,7 +1018,7 @@ async function loadClientAR(id){
 async function loadClientInvoicesTab(id){
   const{data}=await sb.from('invoices').select('*').eq('client_id',id).order('issue_date',{ascending:false});
   if(!data||!data.length){setHTML('cd-invoices','<div class="empty"><div class="empty-icon">🧾</div><h3>No invoices yet</h3></div>');return;}
-  setHTML('cd-invoices',`<div class="tbl-wrap"><table><thead><tr><th>Invoice #</th><th>Issue Date</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+  setHTML('cd-invoices',`<div class="tbl-wrap"><table><thead><tr><th>Invoice #</th><th>Issue Date</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th style="text-align:center">QB</th><th>Actions</th></tr></thead><tbody>
     ${data.map(i=>`<tr>
       <td class="td-mono">${i.invoice_number}</td>
       <td>${fmtDate(i.issue_date)}</td>
@@ -1012,9 +1027,13 @@ async function loadClientInvoicesTab(id){
       <td class="td-num" style="color:var(--green)">${fmt$(i.amount_paid)}</td>
       <td class="td-num" style="color:${i.balance_due>0?'var(--red)':'var(--green)'}">${fmt$(i.balance_due)}</td>
       <td>${statusBadge(i.status)}</td>
+      <td style="text-align:center"><input type="checkbox" ${i.in_quickbooks?'checked':''} onchange="toggleQB('${i.id}',this.checked)" title="Entered in QuickBooks" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"/></td>
       <td>
         <div class="btn-group">
+          <button class="btn btn-xs btn-yellow" onclick="viewInvoice('${i.id}')">👁 View</button>
           ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-primary" onclick="openPaymentModal('${i.id}')">+ Pay</button>`:''}
+          ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-outline" onclick="openEditInvoice('${i.id}')">✏️</button>`:''}
+          ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-danger" onclick="deleteInvoice('${i.id}','${i.invoice_number}')">🗑️</button>`:''}
           <button class="btn btn-xs btn-ghost" onclick="printInvoice('${i.id}')">PDF</button>
         </div>
       </td>
@@ -1184,7 +1203,7 @@ async function loadInvoices(){
 }
 function renderInvoicesTable(data){
   if(!data.length){setHTML('invoices-table','<div class="empty"><div class="empty-icon">🧾</div><h3>No invoices yet</h3></div>');return;}
-  setHTML('invoices-table',`<div class="tbl-wrap"><table><thead><tr><th>Invoice #</th><th>Client</th><th>Issue Date</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+  setHTML('invoices-table',`<div class="tbl-wrap"><table><thead><tr><th>Invoice #</th><th>Client</th><th>Issue Date</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th style="text-align:center">QB ✓</th><th>Actions</th></tr></thead><tbody>
     ${data.map(i=>`<tr>
       <td class="td-mono">${i.invoice_number}</td>
       <td class="td-main">${i.clients?.business_name||'—'}</td>
@@ -1194,8 +1213,12 @@ function renderInvoicesTable(data){
       <td class="td-num" style="color:var(--green)">${fmt$(i.amount_paid)}</td>
       <td class="td-num" style="color:${i.balance_due>0?'var(--red)':'var(--text-mid)'}">${fmt$(i.balance_due)}</td>
       <td>${statusBadge(i.status)}</td>
+      <td style="text-align:center"><input type="checkbox" ${i.in_quickbooks?'checked':''} onchange="toggleQB('${i.id}',this.checked)" title="Entered in QuickBooks" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"/></td>
       <td><div class="btn-group">
+        <button class="btn btn-xs btn-yellow" onclick="viewInvoice('${i.id}')">👁 View</button>
         ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-primary" onclick="openPaymentModal('${i.id}')">+ Pay</button>`:''}
+        ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-outline" onclick="openEditInvoice('${i.id}')">✏️ Edit</button>`:''}
+        ${i.status!=='Paid'&&i.status!=='Void'?`<button class="btn btn-xs btn-danger" onclick="deleteInvoice('${i.id}','${i.invoice_number}')">🗑️</button>`:''}
         <button class="btn btn-xs btn-ghost" onclick="printInvoice('${i.id}')">PDF</button>
       </div></td>
     </tr>`).join('')}
@@ -1413,13 +1436,14 @@ async function loadAging(){
       <td class="td-num">${fmt$(i.total)}</td>
       <td class="td-num" style="color:var(--red)">${fmt$(bal)}</td>
       <td>${statusBadge(i.status)}</td>
-      <td><button class="btn btn-xs btn-primary" onclick="openPaymentModal('${i.id}')">+ Pay</button></td>
+      <td style="text-align:center"><input type="checkbox" ${i.in_quickbooks?'checked':''} onchange="toggleQB('${i.id}',this.checked)" title="Entered in QuickBooks" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"/></td>
+      <td><div class="btn-group"><button class="btn btn-xs btn-yellow" onclick="viewInvoice('${i.id}')">👁 View</button><button class="btn btn-xs btn-primary" onclick="openPaymentModal('${i.id}')">+ Pay</button><button class="btn btn-xs btn-outline" onclick="openEditInvoice('${i.id}')">✏️</button><button class="btn btn-xs btn-danger" onclick="deleteInvoice('${i.id}','${i.invoice_number}')">🗑️</button></div></td>
     </tr>`;
   }).join('');
   setTxt('ag-green',g);setTxt('ag-green-amt',fmt$(gAmt));
   setTxt('ag-amber',a);setTxt('ag-amber-amt',fmt$(aAmt));
   setTxt('ag-red',r);setTxt('ag-red-amt',fmt$(rAmt));
-  setHTML('aging-table',`<div class="tbl-wrap"><table><thead><tr><th>Client</th><th>Invoice #</th><th>Due Date</th><th>Days Out</th><th>Total</th><th>Balance Due</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  setHTML('aging-table',`<div class="tbl-wrap"><table><thead><tr><th>Client</th><th>Invoice #</th><th>Due Date</th><th>Days Out</th><th>Total</th><th>Balance Due</th><th>Status</th><th style="text-align:center">QB ✓</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`);
 }
 
 // ── SERVICES ──
@@ -1593,7 +1617,7 @@ async function printInvoice(invoiceId){
   doc.setFont('helvetica','bold');doc.setFontSize(20);doc.setTextColor(255,255,255);
   doc.text('S&T TAX AND ADVISORY LLC',14,16);
   doc.setFontSize(9);doc.setFont('helvetica','normal');
-  doc.text('Mineola, NY  |  盛泰会计事务所',14,24);
+  doc.text('hello.sttax@gmail.com  |  Mineola, NY',14,24);
   // Invoice label
   doc.setFontSize(22);doc.setFont('helvetica','bold');doc.setTextColor(255,255,255);
   doc.text('INVOICE',202,16,{align:'right'});
@@ -1664,6 +1688,170 @@ async function printInvoice(invoiceId){
   doc.text('Thank you for your business! Questions? Contact S&T Tax and Advisory LLC.',108,275.5,{align:'center'});
   doc.save(`${inv.invoice_number}.pdf`);
   toast('Invoice PDF downloaded!');
+}
+
+// ── EDIT INVOICE ──
+async function openEditInvoice(invoiceId){
+  editingInvoiceId=invoiceId;
+  const{data:inv}=await sb.from('invoices').select('*').eq('id',invoiceId).single();
+  const{data:lines}=await sb.from('invoice_lines').select('*').eq('invoice_id',invoiceId).order('sort_order');
+  if(!inv)return;
+  invLineCount=0;
+  setHTML('invoice-lines','');
+  // Populate client dropdown
+  const{data:clients}=await sb.from('clients').select('id,business_name,preferred_payment_method').eq('status','Active').order('business_name');
+  const sel=document.getElementById('inv-client');
+  sel.innerHTML='<option value="">Select client...</option>';
+  (clients||[]).forEach(c=>{
+    const o=document.createElement('option');o.value=c.id;o.textContent=c.business_name;
+    o.dataset.paymethod=c.preferred_payment_method||'';
+    sel.appendChild(o);
+  });
+  // Fill fields
+  setVal('inv-client',inv.client_id);
+  setVal('inv-status',inv.status);
+  setVal('inv-issue',inv.issue_date);
+  setVal('inv-due',inv.due_date);
+  setVal('inv-period-start',inv.period_start||'');
+  setVal('inv-period-end',inv.period_end||'');
+  setVal('inv-notes',inv.notes||'');
+  setVal('inv-late-fee',inv.late_fee||0);
+  setVal('inv-pay-method',inv.preferred_payment_method||'');
+  // Fill line items
+  (lines||[]).forEach(l=>{
+    const id=`line-${invLineCount++}`;
+    const div=document.createElement('div');
+    div.className='inv-line';div.id=id;
+    div.innerHTML=`
+      <input type="text" placeholder="Description" class="line-desc" oninput="recalcInvoice()" value="${(l.description||'').replace(/"/g,'&quot;')}"/>
+      <input type="number" value="${l.quantity||1}" min="0" step="0.01" class="line-qty" oninput="recalcInvoice()"/>
+      <input type="number" value="${l.unit_price||0}" min="0" step="0.01" class="line-price" oninput="recalcInvoice()"/>
+      <div class="line-total">${fmt$(l.amount)}</div>
+      <button class="btn-remove-line" onclick="this.closest('.inv-line').remove();recalcInvoice()">✕</button>
+    `;
+    document.getElementById('invoice-lines').appendChild(div);
+  });
+  recalcInvoice();
+  setTxt('inv-modal-title',`Edit Invoice — ${inv.invoice_number}`);
+  openModal('modal-invoice');
+}
+
+// ── VIEW INVOICE ──
+async function viewInvoice(invoiceId){
+  const{data:inv}=await sb.from('invoices').select('*,clients(business_name,business_address,primary_email,primary_phone,preferred_payment_method)').eq('id',invoiceId).single();
+  const{data:lines}=await sb.from('invoice_lines').select('*').eq('invoice_id',invoiceId).order('sort_order');
+  if(!inv) return;
+  setTxt('view-inv-title', `Invoice ${inv.invoice_number}`);
+  document.getElementById('view-inv-pdf-btn').onclick = ()=>printInvoice(invoiceId);
+  const linesHtml = (lines||[]).map((l,i)=>`
+    <tr style="background:${i%2===0?'var(--surface2)':'var(--surface)'}">
+      <td style="padding:9px 14px;font-size:13px">${l.description||'—'}</td>
+      <td style="padding:9px 14px;font-size:13px;text-align:center">${parseFloat(l.quantity||1).toFixed(2)}</td>
+      <td style="padding:9px 14px;font-size:13px;text-align:right;font-family:var(--fm)">${fmt$(l.unit_price)}</td>
+      <td style="padding:9px 14px;font-size:13px;text-align:right;font-family:var(--fm);font-weight:600">${fmt$(l.amount)}</td>
+    </tr>`).join('');
+  const balanceColor = parseFloat(inv.balance_due||0)>0 ? 'var(--red)' : 'var(--green)';
+  setHTML('view-inv-body',`
+    <!-- Header -->
+    <div style="background:var(--blue);border-radius:10px;padding:18px 22px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <div style="font-family:var(--fd);font-size:22px;font-weight:800;color:#fff;letter-spacing:1px">S&T TAX AND ADVISORY LLC</div>
+        <div style="font-size:12px;color:rgba(255,255,255,.7);margin-top:3px">hello.sttax@gmail.com  |  Mineola, NY</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-family:var(--fd);font-size:26px;font-weight:800;color:var(--yellow)">INVOICE</div>
+        <div style="font-family:var(--fm);font-size:13px;color:rgba(255,255,255,.85);margin-top:2px">${inv.invoice_number}</div>
+      </div>
+    </div>
+    <!-- Bill To + Details -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <div style="background:var(--surface2);border-radius:8px;padding:14px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Bill To</div>
+        <div style="font-weight:700;font-size:14px;color:var(--text);margin-bottom:4px">${inv.clients?.business_name||'—'}</div>
+        <div style="font-size:12.5px;color:var(--text-muted)">${inv.clients?.business_address||''}</div>
+        <div style="font-size:12.5px;color:var(--text-muted)">${inv.clients?.primary_email||''}</div>
+        <div style="font-size:12.5px;color:var(--text-muted)">${inv.clients?.primary_phone||''}</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;padding:14px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Invoice Details</div>
+        <table style="width:100%;font-size:12.5px"><tbody>
+          <tr><td style="color:var(--text-muted);padding:3px 0;width:45%">Issue Date</td><td style="font-weight:600">${fmtDate(inv.issue_date)}</td></tr>
+          <tr><td style="color:var(--text-muted);padding:3px 0">Due Date</td><td style="font-weight:600">${fmtDate(inv.due_date)}</td></tr>
+          ${inv.period_start?`<tr><td style="color:var(--text-muted);padding:3px 0">Period</td><td style="font-weight:600">${fmtDate(inv.period_start)} – ${fmtDate(inv.period_end)}</td></tr>`:''}
+          <tr><td style="color:var(--text-muted);padding:3px 0">Payment Method</td><td style="font-weight:600">${inv.clients?.preferred_payment_method||'—'}</td></tr>
+          <tr><td style="color:var(--text-muted);padding:3px 0">Status</td><td>${statusBadge(inv.status)}</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+    <!-- Line Items -->
+    <div style="border-radius:8px;overflow:hidden;border:1px solid var(--border);margin-bottom:14px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--blue)">
+          <th style="padding:9px 14px;text-align:left;font-family:var(--fd);font-size:12px;color:#fff;letter-spacing:.5px">DESCRIPTION</th>
+          <th style="padding:9px 14px;text-align:center;font-family:var(--fd);font-size:12px;color:#fff;letter-spacing:.5px;width:70px">QTY</th>
+          <th style="padding:9px 14px;text-align:right;font-family:var(--fd);font-size:12px;color:#fff;letter-spacing:.5px;width:100px">UNIT PRICE</th>
+          <th style="padding:9px 14px;text-align:right;font-family:var(--fd);font-size:12px;color:#fff;letter-spacing:.5px;width:100px">AMOUNT</th>
+        </tr></thead>
+        <tbody>${linesHtml}</tbody>
+      </table>
+    </div>
+    <!-- Totals -->
+    <div style="display:flex;justify-content:flex-end">
+      <div style="min-width:260px">
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)">
+          <span style="color:var(--text-muted)">Subtotal</span>
+          <span style="font-family:var(--fm);font-weight:600">${fmt$(inv.subtotal)}</span>
+        </div>
+        ${parseFloat(inv.late_fee||0)>0?`<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)">
+          <span style="color:var(--red)">Late Fee</span>
+          <span style="font-family:var(--fm);font-weight:600;color:var(--red)">${fmt$(inv.late_fee)}</span>
+        </div>`:''}
+        <div style="display:flex;justify-content:space-between;padding:9px 12px;background:var(--yellow);border-radius:8px;margin-top:6px">
+          <span style="font-family:var(--fd);font-size:16px;font-weight:700;color:var(--blue-dark)">TOTAL</span>
+          <span style="font-family:var(--fm);font-size:16px;font-weight:700;color:var(--blue-dark)">${fmt$(inv.total)}</span>
+        </div>
+        ${parseFloat(inv.amount_paid||0)>0?`
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;margin-top:4px">
+          <span style="color:var(--green)">Amount Paid</span>
+          <span style="font-family:var(--fm);font-weight:600;color:var(--green)">(${fmt$(inv.amount_paid)})</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:9px 12px;background:${balanceColor};border-radius:8px;margin-top:4px">
+          <span style="font-family:var(--fd);font-size:15px;font-weight:700;color:#fff">BALANCE DUE</span>
+          <span style="font-family:var(--fm);font-size:15px;font-weight:700;color:#fff">${fmt$(inv.balance_due)}</span>
+        </div>`:''}
+      </div>
+    </div>
+    ${inv.notes?`<div style="margin-top:14px;padding:10px 14px;background:var(--surface2);border-radius:8px;font-size:12.5px;color:var(--text-muted)">📝 ${inv.notes}</div>`:''}
+    <!-- Footer -->
+    <div style="margin-top:16px;text-align:center;padding:10px;background:var(--blue);border-radius:8px;font-size:12px;color:rgba(255,255,255,.7)">
+      Thank you for your business! Payment via Zelle: hello.sttax@gmail.com
+    </div>
+  `);
+  openModal('modal-view-invoice');
+}
+
+// ── DELETE INVOICE ──
+async function deleteInvoice(invoiceId, invoiceNumber){
+  if(!confirm(`Delete invoice ${invoiceNumber}?\n\nThis cannot be undone. Only unpaid invoices can be deleted.`)) return;
+  // Double check it's not paid
+  const{data:inv}=await sb.from('invoices').select('status').eq('id',invoiceId).single();
+  if(!inv){toast('Invoice not found','error');return;}
+  if(inv.status==='Paid'){toast('Cannot delete a paid invoice','error');return;}
+  // Delete lines first (cascade should handle it but be explicit)
+  await sb.from('invoice_lines').delete().eq('invoice_id',invoiceId);
+  const{error}=await sb.from('invoices').delete().eq('id',invoiceId);
+  if(error){toast(error.message,'error');return;}
+  toast(`Invoice ${invoiceNumber} deleted`);
+  loadInvoices();
+  loadAging();
+  if(currentClientId) loadClientDetail(currentClientId);
+}
+
+// ── QUICKBOOKS TOGGLE ──
+async function toggleQB(invoiceId, checked){
+  const{error}=await sb.from('invoices').update({in_quickbooks:checked}).eq('id',invoiceId);
+  if(error){toast(error.message,'error');return;}
+  toast(checked?'✅ Marked as entered in QuickBooks':'Removed QuickBooks mark');
 }
 
 // ── BACKUP ──
